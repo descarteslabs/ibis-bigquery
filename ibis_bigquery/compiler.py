@@ -558,7 +558,7 @@ if geospatial_supported:
         ops.GeoMaxDistance: multi_arity("ST_MaxDistance", 2, 3),
         ops.GeoNPoints: unary("ST_NumPoints"),
         ops.GeoPerimeter: multi_arity("ST_Perimeter", 1, 2),
-        # not yet defined in 1.3.0
+        ops.GeoSetSRID: fixed_arity(sa.func.ST_SetSRID, 2),
         # ops.GeoPoint: fixed_arity("ST_GeogPoint", 2),
         ops.GeoTouches: fixed_arity("ST_Touches", 2),
         ops.GeoUnaryUnion: unary("ST_Union_Agg"),
