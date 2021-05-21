@@ -1,5 +1,6 @@
 # core
-ibis-framework
+https://git@github.com/ibis-project/ibis/archive/b46c60bbb4ee5e9b809a9c83cf4da79a0856b025.zip#egg=ibis-framework
+# must import first to get 
 google-cloud-bigquery
 pydata-google-auth
 

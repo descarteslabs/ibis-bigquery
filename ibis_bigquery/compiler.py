@@ -2,6 +2,7 @@
 
 import base64
 import datetime
+import json
 from functools import partial
 
 import ibis
@@ -25,6 +26,7 @@ import toolz
 
 try:
     # 2.x
+    from ibis.backends.base.sql.compiler import DDL, Union
     from ibis.backends.base.sql.registry import (
         fixed_arity,
         literal,
@@ -32,10 +34,10 @@ try:
         reduction,
         unary,
     )
-    from ibis.backends.base.sql.compiler import DDL, Union
 except ImportError:
     try:
         # 1.4
+        from ibis.backaned.base_sql.compiler import DDL, Union
         from ibis.backends.base_sql import (
             fixed_arity,
             literal,
@@ -43,7 +45,6 @@ except ImportError:
             reduction,
             unary,
         )
-        from ibis.backaned.base_sql.compiler import DDL, Union
     except ImportError:
         # 1.2
         from ibis.impala.compiler import _literal as literal
@@ -66,6 +67,16 @@ except ImportError:
 from multipledispatch import Dispatcher
 
 from .datatypes import ibis_type_to_bigquery_type
+
+geospatial_supported = False
+try:
+    import geopandas  # noqa:F401
+    import shapely.geometry
+    import shapely
+
+    geospatial_supported = True
+except ImportError:
+    pass
 
 
 def build_ast(expr, context):
@@ -301,6 +312,26 @@ def _log(translator, expr):
 
 
 def _literal(translator, expr):
+    # geospatial inherits from numeric for some reason
+    # so this needs to come first
+    if isinstance(expr, ir.GeoSpatialValue):
+        op = expr.op()
+        value = op.value
+        srid = op.dtype.srid
+
+        # if the srid is set, it must be EPSG:4326,
+        # and we should interpret the shapely object
+        # through the WKT representation to avoid
+        # altering the geometry
+        if srid == 4326:
+            tmpl = "ST_GEOGFROMTEXT('{}')"
+            value = value.wkt
+        # else we should interpret it from geojson
+        # which alters the geometry in the query
+        else:
+            tmpl = "ST_GEOGFROMGEOJSON('{}')"
+            value = json.dumps(shapely.geometry.mapping(value))
+        return tmpl.format(value)
 
     if isinstance(expr, ir.NumericValue):
         value = expr.op().value
@@ -494,6 +525,82 @@ _invalid_operations = {
 _operation_registry = {
     k: v for k, v in _operation_registry.items() if k not in _invalid_operations
 }
+
+
+if geospatial_supported:
+
+    def multi_arity(func_name, min_arity, max_arity):
+        def formatter(translator, expr):
+            op = expr.op()
+            if min_arity > len(op.args) or max_arity < len(op.args):
+                raise com.IbisError("incorrect number of args")
+            return _format_call(translator, func_name, *op.args)
+
+        return formatter
+
+    _geospatial_functions = {
+        ops.GeoArea: multi_arity("ST_Area", 1, 2),
+        ops.GeoAsBinary: unary("ST_AsBinary"),
+        ops.GeoAsText: unary("ST_AsText"),
+        ops.GeoCentroid: unary("ST_Centroid"),
+        ops.GeoContains: fixed_arity("ST_Contains", 2),
+        ops.GeoContainsProperly: fixed_arity("ST_Contains", 2),
+        ops.GeoCoveredBy: fixed_arity("ST_CoveredBy", 2),
+        ops.GeoCovers: fixed_arity("ST_Covers", 2),
+        ops.GeoDifference: fixed_arity("ST_Difference", 2),
+        ops.GeoDisjoint: fixed_arity("ST_Disjoint", 2),
+        ops.GeoDistance: multi_arity("ST_Distance", 2, 3),
+        ops.GeoDWithin: multi_arity("ST_DWithin", 3, 4),
+        ops.GeoEquals: fixed_arity("ST_Equals", 2),
+        ops.GeoIntersection: fixed_arity("ST_Intersection", 2),
+        ops.GeoIntersects: fixed_arity("ST_Intersects", 2),
+        ops.GeoLength: multi_arity("ST_Length", 1, 2),
+        ops.GeoMaxDistance: multi_arity("ST_MaxDistance", 2, 3),
+        ops.GeoNPoints: unary("ST_NumPoints"),
+        ops.GeoPerimeter: multi_arity("ST_Perimeter", 1, 2),
+        # not yet defined in 1.3.0
+        # ops.GeoPoint: fixed_arity("ST_GeogPoint", 2),
+        ops.GeoTouches: fixed_arity("ST_Touches", 2),
+        ops.GeoUnaryUnion: unary("ST_Union_Agg"),
+        ops.GeoUnion: multi_arity("ST_Union", 1, 2),
+        ops.GeoWithin: fixed_arity("ST_Within", 2),
+        ops.GeoX: unary("ST_X"),
+        ops.GeoY: unary("ST_Y"),
+        # Missing Geospatial ops:
+        #   ST_AsEWKB
+        #   ST_AsEWKT
+        #   ST_Azimuth
+        #   ST_AsGeoJson
+        #   ST_AsGML
+        #   ST_AsKML
+        #   ST_AsRaster
+        #   ST_AsSVG
+        #   ST_AsTWKB
+        #   ST_Buffer
+        #   ST_Crosses
+        #   ST_Distance_Sphere
+        #   ST_DFullyWithin
+        #   ST_Dump
+        #   ST_DumpPoints
+        #   ST_Envelope
+        #   ST_GeometryN
+        #   ST_GeometryType
+        #   ST_GeomFromEWKB
+        #   ST_GeomFromEWKT
+        #   ST_GeomFromText
+        #   ST_IsValid
+        #   ST_LineLocatePoint
+        #   ST_LineMerge
+        #   ST_LineSubstring
+        #   ST_OrderingEquals
+        #   ST_Overlaps
+        #   ST_Simplify
+        #   ST_SRID
+        #   ST_SetSRID
+        #   ST_Transform
+    }
+
+    _operation_registry.update(_geospatial_functions)
 
 
 class BigQueryExprTranslator(BaseExprTranslator):
