@@ -1,3 +1,5 @@
+from functools import wraps
+
 import ibis.expr.datatypes as dt
 from multipledispatch import Dispatcher
 
@@ -122,10 +124,6 @@ def trans_geospatial(t, context):
     return "GEOGRAPHY"
 
 
-# monkeypatch ibis.expr.datatypes.TypeParser.type
-from functools import wraps
-
-
 def fix_type(f):
     @wraps(f)
     def wrapper(self):
@@ -143,5 +141,7 @@ def fix_type(f):
     return wrapper
 
 
+# monkeypatch ibis.expr.datatypes.TypeParser.type
+# to allow for our geojson/wkt hack
 _fixed = fix_type(dt.TypeParser.type)
 dt.TypeParser.type = _fixed
